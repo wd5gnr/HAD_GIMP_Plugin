@@ -22,7 +22,7 @@ from gi.repository import Gimp, Gegl, GimpUi, Gtk, Gdk, GLib
 # ----------------------------------------------------------------------
 
 PLUGIN_NAME = "Hackaday Tools"
-PLUGIN_VERSION = "1.4.2"
+PLUGIN_VERSION = "1.5.0"
 PLUGIN_BINARY = os.path.basename(sys.argv[0])
 
 
@@ -77,6 +77,34 @@ DEFAULT_THRESHOLD = 0.50
 DEFAULT_BACKGROUND = "#1a1a1a"
 DEFAULT_FOREGROUND = "#f3bf10"
 DEFAULT_CUSTOM_SQUARE_SIZE = 1000
+DEFAULT_SCALE_1_1 = False
+DEFAULT_SCALE_1_1_SIZE = 600
+DEFAULT_SCALE_16_9 = False
+DEFAULT_SCALE_16_9_WIDTH = 800
+DEFAULT_INTERPOLATION = "nohalo"
+
+INTERPOLATION_CHOICES = {
+    "none": (
+        "None",
+        Gimp.InterpolationType.NONE
+    ),
+    "linear": (
+        "Linear",
+        Gimp.InterpolationType.LINEAR
+    ),
+    "cubic": (
+        "Cubic",
+        Gimp.InterpolationType.CUBIC
+    ),
+    "nohalo": (
+        "NoHalo",
+        Gimp.InterpolationType.NOHALO
+    ),
+    "lohalo": (
+        "LoHalo",
+        Gimp.InterpolationType.LOHALO
+    ),
+}
 
 SETTINGS_SECTION = "Hackaday Tools"
 
@@ -122,6 +150,36 @@ def status(message):
         pass
 
 
+def scale_image(
+        image,
+        width,
+        height,
+        interpolation):
+
+    interpolation_type = \
+        INTERPOLATION_CHOICES.get(
+            interpolation,
+            INTERPOLATION_CHOICES[
+                DEFAULT_INTERPOLATION
+            ]
+        )[1]
+
+    Gimp.context_push()
+
+    try:
+        Gimp.context_set_interpolation(
+            interpolation_type
+        )
+
+        image.scale(
+            width,
+            height
+        )
+
+    finally:
+        Gimp.context_pop()
+
+
 # ----------------------------------------------------------------------
 # Persistent settings
 # ----------------------------------------------------------------------
@@ -146,6 +204,21 @@ def default_settings():
 
         "custom_square_size":
             DEFAULT_CUSTOM_SQUARE_SIZE,
+
+        "scale_1_1":
+            DEFAULT_SCALE_1_1,
+
+        "scale_1_1_size":
+            DEFAULT_SCALE_1_1_SIZE,
+
+        "scale_16_9":
+            DEFAULT_SCALE_16_9,
+
+        "scale_16_9_width":
+            DEFAULT_SCALE_16_9_WIDTH,
+
+        "interpolation":
+            DEFAULT_INTERPOLATION,
     }
 
 
@@ -207,6 +280,78 @@ def load_settings():
             except Exception:
                 pass
 
+            try:
+                interpolation = parser.get(
+                    SETTINGS_SECTION,
+                    "interpolation"
+                ).strip().lower()
+
+                if interpolation in \
+                        INTERPOLATION_CHOICES:
+
+                    settings["interpolation"] = \
+                        interpolation
+
+            except Exception:
+                pass
+
+            #
+            # Optional post-crop scaling
+            #
+            try:
+                settings["scale_1_1"] = \
+                    parser.getboolean(
+                        SETTINGS_SECTION,
+                        "scale_1_1"
+                    )
+
+            except Exception:
+                pass
+
+            try:
+                size = parser.getint(
+                    SETTINGS_SECTION,
+                    "scale_1_1_size"
+                )
+
+                settings["scale_1_1_size"] = max(
+                    1,
+                    min(
+                        10000,
+                        size
+                    )
+                )
+
+            except Exception:
+                pass
+
+            try:
+                settings["scale_16_9"] = \
+                    parser.getboolean(
+                        SETTINGS_SECTION,
+                        "scale_16_9"
+                    )
+
+            except Exception:
+                pass
+
+            try:
+                width = parser.getint(
+                    SETTINGS_SECTION,
+                    "scale_16_9_width"
+                )
+
+                settings["scale_16_9_width"] = max(
+                    1,
+                    min(
+                        10000,
+                        width
+                    )
+                )
+
+            except Exception:
+                pass
+
             #
             # Background
             #
@@ -254,7 +399,10 @@ def load_settings():
 
                 settings["custom_square_size"] = max(
                     1,
-                    size
+                    min(
+                        10000,
+                        size
+                    )
                 )
 
             except Exception:
@@ -285,6 +433,29 @@ def save_settings(settings):
                     "custom_square_size"
                 ]
             ),
+
+        "scale_1_1":
+            str(
+                settings["scale_1_1"]
+            ).lower(),
+
+        "scale_1_1_size":
+            str(
+                settings["scale_1_1_size"]
+            ),
+
+        "scale_16_9":
+            str(
+                settings["scale_16_9"]
+            ).lower(),
+
+        "scale_16_9_width":
+            str(
+                settings["scale_16_9_width"]
+            ),
+
+        "interpolation":
+            settings["interpolation"],
     }
 
     try:
@@ -1109,7 +1280,10 @@ def run_aspect_crop(
         procedure,
         image,
         ratio_width,
-        ratio_height):
+        ratio_height,
+        scale_enabled=False,
+        target_width=None,
+        interpolation=DEFAULT_INTERPOLATION):
 
     width = image.get_width()
     height = image.get_height()
@@ -1172,7 +1346,7 @@ def run_aspect_crop(
         )
 
         #
-        # Aspect-ratio operations never resample.
+        # Crop before applying any configured output scaling.
         #
         image.crop(
             crop_width,
@@ -1181,28 +1355,53 @@ def run_aspect_crop(
             y
         )
 
+        if scale_enabled:
+
+            scaled_width = max(
+                1,
+                int(target_width)
+            )
+
+            scaled_height = max(
+                1,
+                round(
+                    scaled_width *
+                    ratio_height /
+                    ratio_width
+                )
+            )
+
+            scale_image(
+                image,
+                scaled_width,
+                scaled_height,
+                interpolation
+            )
+
     finally:
         image.undo_group_end()
 
     flush()
 
     if bounds is None:
-
-        status(
-            f"center-cropped to "
-            f"{ratio_width}:{ratio_height} "
-            f"({crop_width}×{crop_height}); "
-            f"no resizing"
-        )
+        crop_description = "center-cropped"
 
     else:
+        crop_description = "cropped around selection"
 
-        status(
-            f"cropped around selection to "
-            f"{ratio_width}:{ratio_height} "
-            f"({crop_width}×{crop_height}); "
-            f"no resizing"
-        )
+    if scale_enabled:
+        size_description = \
+            f"scaled to {scaled_width}×{scaled_height}"
+
+    else:
+        size_description = "no resizing"
+
+    status(
+        f"{crop_description} to "
+        f"{ratio_width}:{ratio_height} "
+        f"({crop_width}×{crop_height}); "
+        f"{size_description}"
+    )
 
     return ok(
         procedure
@@ -1217,11 +1416,16 @@ def run_crop_16_9(
         config,
         data):
 
+    settings = load_settings()
+
     return run_aspect_crop(
         procedure,
         image,
         16,
-        9
+        9,
+        settings["scale_16_9"],
+        settings["scale_16_9_width"],
+        settings["interpolation"]
     )
 
 
@@ -1233,11 +1437,16 @@ def run_crop_1_1(
         config,
         data):
 
+    settings = load_settings()
+
     return run_aspect_crop(
         procedure,
         image,
         1,
-        1
+        1,
+        settings["scale_1_1"],
+        settings["scale_1_1_size"],
+        settings["interpolation"]
     )
 
 
@@ -1456,6 +1665,64 @@ def run_settings(
 
 
     #
+    # Section headings
+    #
+    aspect_heading = Gtk.Label()
+
+    aspect_heading.set_markup(
+        "<b>Aspect-ratio crops</b>"
+    )
+
+    aspect_heading.set_xalign(
+        0.0
+    )
+
+    grid.attach(
+        aspect_heading,
+        0,
+        0,
+        2,
+        1
+    )
+
+    lineart_heading = Gtk.Label()
+
+    lineart_heading.set_markup(
+        "<b>Line art</b>"
+    )
+
+    lineart_heading.set_xalign(
+        0.0
+    )
+
+    grid.attach(
+        lineart_heading,
+        0,
+        5,
+        2,
+        1
+    )
+
+    deprecated_heading = Gtk.Label()
+
+    deprecated_heading.set_markup(
+        "<b>Deprecated tools</b>"
+    )
+
+    deprecated_heading.set_xalign(
+        0.0
+    )
+
+    grid.attach(
+        deprecated_heading,
+        0,
+        10,
+        2,
+        1
+    )
+
+
+    #
     # Threshold
     #
     threshold_label = Gtk.Label(
@@ -1490,7 +1757,7 @@ def run_settings(
     grid.attach(
         threshold_label,
         0,
-        0,
+        6,
         1,
         1
     )
@@ -1498,7 +1765,7 @@ def run_settings(
     grid.attach(
         threshold_spin,
         1,
-        0,
+        6,
         1,
         1
     )
@@ -1529,7 +1796,7 @@ def run_settings(
     grid.attach(
         background_label,
         0,
-        1,
+        7,
         1,
         1
     )
@@ -1537,7 +1804,7 @@ def run_settings(
     grid.attach(
         background_button,
         1,
-        1,
+        7,
         1,
         1
     )
@@ -1568,7 +1835,7 @@ def run_settings(
     grid.attach(
         foreground_label,
         0,
-        2,
+        8,
         1,
         1
     )
@@ -1576,8 +1843,298 @@ def run_settings(
     grid.attach(
         foreground_button,
         1,
+        8,
+        1,
+        1
+    )
+
+
+    #
+    # Optional post-crop scaling
+    #
+    scale_1_1_check = Gtk.CheckButton(
+        label="Scale 1:1 result to:"
+    )
+
+    scale_1_1_check.set_active(
+        settings["scale_1_1"]
+    )
+
+    scale_1_1_spin = \
+        Gtk.SpinButton.new_with_range(
+            1,
+            10000,
+            1
+        )
+
+    scale_1_1_spin.set_digits(
+        0
+    )
+
+    scale_1_1_spin.set_value(
+        settings["scale_1_1_size"]
+    )
+
+    scale_1_1_spin.set_sensitive(
+        settings["scale_1_1"]
+    )
+
+    scale_1_1_spin.set_tooltip_text(
+        "Width and height of the final square image."
+    )
+
+    scale_1_1_check.connect(
+        "toggled",
+        lambda button:
+            scale_1_1_spin.set_sensitive(
+                button.get_active()
+            )
+    )
+
+    scale_1_1_units = Gtk.Label(
+        label="px"
+    )
+
+    scale_1_1_preview = Gtk.Label()
+
+    def update_scale_1_1_preview(spin):
+        size = spin.get_value_as_int()
+
+        scale_1_1_preview.set_text(
+            f"Output: {size}×{size}"
+        )
+
+    update_scale_1_1_preview(
+        scale_1_1_spin
+    )
+
+    scale_1_1_spin.connect(
+        "value-changed",
+        update_scale_1_1_preview
+    )
+
+    scale_1_1_box = Gtk.Box(
+        orientation=Gtk.Orientation.HORIZONTAL,
+        spacing=6
+    )
+
+    scale_1_1_box.pack_start(
+        scale_1_1_spin,
+        False,
+        False,
+        0
+    )
+
+    scale_1_1_box.pack_start(
+        scale_1_1_units,
+        False,
+        False,
+        0
+    )
+
+    scale_1_1_box.pack_start(
+        scale_1_1_preview,
+        False,
+        False,
+        6
+    )
+
+    grid.attach(
+        scale_1_1_check,
+        0,
+        1,
+        1,
+        1
+    )
+
+    grid.attach(
+        scale_1_1_box,
+        1,
+        1,
+        1,
+        1
+    )
+
+    scale_16_9_check = Gtk.CheckButton(
+        label="Scale 16:9 result to width:"
+    )
+
+    scale_16_9_check.set_active(
+        settings["scale_16_9"]
+    )
+
+    scale_16_9_spin = \
+        Gtk.SpinButton.new_with_range(
+            1,
+            10000,
+            1
+        )
+
+    scale_16_9_spin.set_digits(
+        0
+    )
+
+    scale_16_9_spin.set_value(
+        settings["scale_16_9_width"]
+    )
+
+    scale_16_9_spin.set_sensitive(
+        settings["scale_16_9"]
+    )
+
+    scale_16_9_spin.set_tooltip_text(
+        "Width of the final 16:9 image; height is "
+        "calculated automatically."
+    )
+
+    scale_16_9_check.connect(
+        "toggled",
+        lambda button:
+            scale_16_9_spin.set_sensitive(
+                button.get_active()
+            )
+    )
+
+    scale_16_9_units = Gtk.Label(
+        label="px"
+    )
+
+    scale_16_9_preview = Gtk.Label()
+
+    def update_scale_16_9_preview(spin):
+        width = spin.get_value_as_int()
+
+        height = max(
+            1,
+            round(
+                width * 9 / 16
+            )
+        )
+
+        scale_16_9_preview.set_text(
+            f"Output: {width}×{height}"
+        )
+
+    update_scale_16_9_preview(
+        scale_16_9_spin
+    )
+
+    scale_16_9_spin.connect(
+        "value-changed",
+        update_scale_16_9_preview
+    )
+
+    scale_16_9_box = Gtk.Box(
+        orientation=Gtk.Orientation.HORIZONTAL,
+        spacing=6
+    )
+
+    scale_16_9_box.pack_start(
+        scale_16_9_spin,
+        False,
+        False,
+        0
+    )
+
+    scale_16_9_box.pack_start(
+        scale_16_9_units,
+        False,
+        False,
+        0
+    )
+
+    scale_16_9_box.pack_start(
+        scale_16_9_preview,
+        False,
+        False,
+        6
+    )
+
+    grid.attach(
+        scale_16_9_check,
+        0,
         2,
         1,
+        1
+    )
+
+    grid.attach(
+        scale_16_9_box,
+        1,
+        2,
+        1,
+        1
+    )
+
+
+    interpolation_label = Gtk.Label(
+        label="Scaling interpolation:"
+    )
+
+    interpolation_label.set_xalign(
+        0.0
+    )
+
+    interpolation_combo = Gtk.ComboBoxText()
+
+    for interpolation_id, choice in \
+            INTERPOLATION_CHOICES.items():
+
+        choice_label = choice[0]
+
+        interpolation_combo.append(
+            interpolation_id,
+            choice_label
+        )
+
+    interpolation_combo.set_active_id(
+        settings["interpolation"]
+    )
+
+    interpolation_combo.set_tooltip_text(
+        "Resampling method used when an aspect-ratio "
+        "crop is scaled. NoHalo is the default."
+    )
+
+    grid.attach(
+        interpolation_label,
+        0,
+        3,
+        1,
+        1
+    )
+
+    grid.attach(
+        interpolation_combo,
+        1,
+        3,
+        1,
+        1
+    )
+
+    aspect_separator = Gtk.Separator(
+        orientation=
+            Gtk.Orientation.HORIZONTAL
+    )
+
+    grid.attach(
+        aspect_separator,
+        0,
+        4,
+        2,
+        1
+    )
+
+    lineart_separator = Gtk.Separator(
+        orientation=
+            Gtk.Orientation.HORIZONTAL
+    )
+
+    grid.attach(
+        lineart_separator,
+        0,
+        9,
+        2,
         1
     )
 
@@ -1618,7 +2175,7 @@ def run_settings(
     grid.attach(
         custom_size_label,
         0,
-        3,
+        11,
         1,
         1
     )
@@ -1626,7 +2183,7 @@ def run_settings(
     grid.attach(
         custom_size_spin,
         1,
-        3,
+        11,
         1,
         1
     )
@@ -1643,7 +2200,7 @@ def run_settings(
     grid.attach(
         separator,
         0,
-        4,
+        12,
         2,
         1
     )
@@ -1664,7 +2221,7 @@ def run_settings(
         "Utilities for preparing images "
         "for Hackaday.\n\n"
         "Crop images to common aspect ratios "
-        "without resampling, convert "
+        "with optional output scaling, convert "
         "black-and-white line art to Hackaday "
         "colors, and retain the older fixed-size "
         "tools under Deprecated."
@@ -1677,7 +2234,7 @@ def run_settings(
     grid.attach(
         about,
         0,
-        5,
+        13,
         2,
         1
     )
@@ -1708,6 +2265,26 @@ def run_settings(
                 )
             )
 
+            scale_1_1_check.set_active(
+                DEFAULT_SCALE_1_1
+            )
+
+            scale_1_1_spin.set_value(
+                DEFAULT_SCALE_1_1_SIZE
+            )
+
+            scale_16_9_check.set_active(
+                DEFAULT_SCALE_16_9
+            )
+
+            scale_16_9_spin.set_value(
+                DEFAULT_SCALE_16_9_WIDTH
+            )
+
+            interpolation_combo.set_active_id(
+                DEFAULT_INTERPOLATION
+            )
+
             custom_size_spin.set_value(
                 DEFAULT_CUSTOM_SQUARE_SIZE
             )
@@ -1731,6 +2308,21 @@ def run_settings(
                     rgba_to_hex(
                         foreground_button.get_rgba()
                     ),
+
+                "scale_1_1":
+                    scale_1_1_check.get_active(),
+
+                "scale_1_1_size":
+                    scale_1_1_spin.get_value_as_int(),
+
+                "scale_16_9":
+                    scale_16_9_check.get_active(),
+
+                "scale_16_9_width":
+                    scale_16_9_spin.get_value_as_int(),
+
+                "interpolation":
+                    interpolation_combo.get_active_id(),
 
                 "custom_square_size":
                     custom_size_spin.get_value_as_int(),
@@ -1874,7 +2466,8 @@ class HackadayTools(
                 run_crop_16_9,
                 "Crop to _16:9",
                 "Crop to the largest possible "
-                "16:9 rectangle without resizing. "
+                "16:9 rectangle, then optionally "
+                "scale it to the configured width. "
                 "With no selection the crop is "
                 "centered. With a selection, position "
                 "the crop to preserve the selected "
@@ -1890,7 +2483,8 @@ class HackadayTools(
                 run_crop_1_1,
                 "Crop to _1:1",
                 "Crop to the largest possible square "
-                "without resizing. With no selection "
+                "and optionally scale it to the "
+                "configured size. With no selection "
                 "the crop is centered. With a selection, "
                 "position the crop to preserve the "
                 "selected region whenever possible."
@@ -2033,8 +2627,9 @@ class HackadayTools(
 
                 "Set the line-art threshold, "
                 "Hackaday foreground/background "
-                "colors and deprecated custom "
-                "square size.",
+                "colors, optional aspect-crop output "
+                "scaling and deprecated custom square "
+                "size.",
 
                 None
             )

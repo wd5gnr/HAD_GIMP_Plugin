@@ -2,7 +2,7 @@
 
 A small GIMP 3.x plug-in for common Hackaday image-preparation tasks.
 
-Current version: **1.4.2**
+Current version: **1.5.0**
 
 ## Features
 
@@ -10,13 +10,15 @@ Current version: **1.4.2**
 
 - **Crop to 16:9**
   - Crops to the largest possible exact 16:9 rectangle.
-  - Does **not** resample or reduce image resolution.
+  - Can optionally scale the cropped result to a configured width.
+  - Optional scaling is disabled by default; its default width is 800 px.
   - With no selection, the crop is centered.
   - With a selection, the selection is treated as the important region and the crop is positioned to preserve it whenever possible.
 
 - **Crop to 1:1**
   - Crops to the largest possible square.
-  - Does **not** resample or reduce image resolution.
+  - Can optionally scale the cropped result to a configured square size.
+  - Optional scaling is disabled by default; its default size is 600x600 px.
   - With no selection, the crop is centered.
   - With a selection, the selection is treated as the important region and the crop is positioned to preserve it whenever possible.
 
@@ -31,6 +33,8 @@ Current version: **1.4.2**
   - Source light pixels become the configured Hackaday foreground color.
 
 - **Settings...**
+  - Configure optional output scaling for the 1:1 and 16:9 crop tools.
+  - Choose the scaling interpolation method; NoHalo is the default.
   - Configure the line-art threshold.
   - Configure Hackaday foreground/background colors.
   - Configure the custom square size used by the deprecated fixed-size tool.
@@ -58,6 +62,11 @@ The fixed-size square tools may enlarge an image if necessary so that the reques
 Threshold:                  0.50
 Hackaday background color:  #1a1a1a
 Hackaday foreground color:  #f3bf10
+Scale 1:1 result:            disabled
+1:1 output size:             600 px
+Scale 16:9 result:           disabled
+16:9 output width:           800 px
+Scaling interpolation:       NoHalo
 Custom square size:          1000
 ```
 
@@ -108,7 +117,7 @@ Either remove the backup file from the plug-in directory or make sure it is not 
 
 ## How the aspect-ratio crops work
 
-The aspect-ratio tools preserve as much source resolution as possible by cropping only. They do not resize the image.
+The aspect-ratio tools first preserve as much source resolution as possible by cropping. If optional output scaling is enabled in **Settings...**, they then scale the cropped image to the configured dimensions.
 
 For example:
 
@@ -117,6 +126,17 @@ For example:
 6000x4000 → Crop to 16:9 → 6000x3375
 4032x3024 → Crop to 1:1  → 3024x3024
 ```
+
+With the default scaling dimensions enabled, examples include:
+
+```text
+4000x3000 → Crop to 16:9 → 4000x2250 → Scale to 800x450
+4032x3024 → Crop to 1:1  → 3024x3024 → Scale to 600x600
+```
+
+For 16:9 output, the configured number is the width and the height is calculated automatically. If the width does not produce a whole-pixel 16:9 height, the height is rounded to the nearest pixel. Scaling can enlarge or reduce the cropped image.
+
+The scaling interpolation can be set to None, Linear, Cubic, NoHalo, or LoHalo. NoHalo is the default and is a strong general-purpose choice for reducing photographic images.
 
 If there is no active selection, the crop is centered.
 
@@ -134,7 +154,7 @@ In the shortcut editor, search for the Hackaday Tools commands and assign whatev
 
 For more information, see the GIMP documentation for Interface preferences:
 
-https://docs.gimp.org/2.6/en/gimp-pimping.html#gimp-prefs-interface
+https://docs.gimp.org/3.0/en/gimp-prefs-interface.html
 
 ## Notes
 
@@ -154,4 +174,4 @@ source dark  → Hackaday background
 source light → Hackaday foreground
 ```
 
-The aspect-ratio crop tools are the preferred workflow for preserving full source resolution. The fixed-size resize and square tools remain available under **Deprecated** for compatibility with older workflows.
+The aspect-ratio crop tools are the preferred workflow. Leave their scaling options disabled to preserve full source resolution, or enable scaling to produce consistent output dimensions. The fixed-size resize and square tools remain available under **Deprecated** for compatibility with older workflows.
